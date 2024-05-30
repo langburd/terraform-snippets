@@ -1,6 +1,8 @@
 # ArgoCD and Argo Workflows Terraform Module
 
-This folder contains the Terraform code for deploying and managing ArgoCD and Argo Workflows on a Kubernetes cluster.
+Description is generated using GitHub Copilot Chat
+
+This folder contains the example of Terraform code for deploying and managing ArgoCD and Argo Workflows on a EKS Kubernetes cluster.
 
 ## Overview
 
