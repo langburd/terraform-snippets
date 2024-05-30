@@ -1,0 +1,133 @@
+---
+# https://github.com/argoproj/argo-helm/blob/argo-workflows-0.41.6/charts/argo-workflows/values.yaml
+images:
+  # -- imagePullPolicy to apply to all containers
+  pullPolicy: IfNotPresent
+workflow:
+  serviceAccount:
+    # -- Specifies whether a service account should be created
+    create: true
+    # -- Service account which is used to run workflows
+    name: "argo-workflow"
+controller:
+  metricsConfig:
+    # -- Enables prometheus metrics server
+    enabled: true
+  # -- Default values that will apply to all Workflows from this controller, unless overridden on the Workflow-level.
+  # Only valid for 2.7+
+  ## See more: https://argo-workflows.readthedocs.io/en/stable/default-workflow-specs/
+  workflowDefaults:
+    spec:
+      ttlStrategy:
+        secondsAfterCompletion: 259200 # 3 days in seconds
+        secondsAfterFailure: 259200 # 3 days in seconds
+        secondsAfterSuccess: 259200 # 3 days in seconds
+  serviceMonitor:
+    # -- Enable a prometheus ServiceMonitor
+    enabled: true
+    # -- Prometheus ServiceMonitor namespace
+    namespace: monitoring
+  serviceAccount:
+    # -- Create a service account for the controller
+    create: true
+    # -- Service account name
+    name: argowfs-controller
+  # -- Workflow controller name string
+  name: controller
+  # -- Specify all namespaces where this workflow controller instance will manage
+  # workflows. This controls where the service account and RBAC resources will
+  # be created. Only valid when singleNamespace is false.
+  workflowNamespaces:
+    - ${workflows_namespaces}
+  logging:
+    # -- Set the logging format (one of: `text`, `json`)
+    format: json
+  # -- Resource limits and requests for the controller
+  resources:
+    limits:
+      cpu: ${controller_resources_limits_cpu}
+      memory: ${controller_resources_limits_mem}
+    requests:
+      cpu: ${controller_resources_requests_cpu}
+      memory: ${controller_resources_requests_mem}
+  # -- The number of controller pods to run
+  replicas: ${controller_replicas}
+server:
+  serviceAccount:
+    # -- Service account name
+    name: argowfs-server
+    # -- Annotations applied to created service account
+    annotations:
+      workflows.argoproj.io/rbac-rule: "'565b060c-3b2b-4363-8ef5-42005e65dc66' in groups" # Grant access to the 'DevOps' group
+  # -- The number of server pods to run
+  replicas: ${server_replicas}
+  # -- A list of supported authentication modes. Available values are `server`, `client`, or `sso`. If you provide sso, please configure `.Values.server.sso` as well.
+  ## Ref: https://argo-workflows.readthedocs.io/en/stable/argo-server-auth-mode/
+  authModes:
+    - sso
+  # -- Extra arguments to provide to the Argo server binary.
+  ## Ref: https://argo-workflows.readthedocs.io/en/stable/argo-server/#options
+  extraArgs:
+    # - --auth-mode=sso
+    - --verbose
+  logging:
+    # -- Set the logging format (one of: `text`, `json`)
+    format: json
+  ## Ingress configuration.
+  # ref: https://kubernetes.io/docs/user-guide/ingress/
+  ingress:
+    # -- Enable an ingress resource
+    enabled: true
+    # -- Additional ingress annotations
+    annotations:
+      alb.ingress.kubernetes.io/actions.ssl-redirect: '{"Type": "redirect", "RedirectConfig": { "Protocol": "HTTPS", "Port": "443", "StatusCode": "HTTP_301"}}'
+      alb.ingress.kubernetes.io/backend-protocol: HTTP
+      alb.ingress.kubernetes.io/certificate-arn: ${alb_certificate_arn}
+      alb.ingress.kubernetes.io/group.name: ${alb_group_name}
+      alb.ingress.kubernetes.io/healthcheck-path: /
+      alb.ingress.kubernetes.io/listen-ports: '[{"HTTP":80,"HTTPS": 443}]'
+      alb.ingress.kubernetes.io/load-balancer-name: ${alb_name}
+      alb.ingress.kubernetes.io/scheme: internet-facing
+      alb.ingress.kubernetes.io/tags: ${alb_tags}
+      alb.ingress.kubernetes.io/target-type: ip
+    # -- Defines which ingress controller will implement the resource
+    ingressClassName: alb
+    # -- List of ingress hosts
+    ## Hostnames must be provided if Ingress is enabled.
+    ## Secrets must be manually created in the namespace
+    hosts:
+      - ${argowfs_fqdn}
+  # SSO configuration when SSO is specified as a server auth mode.
+  sso:
+    # -- Create SSO configuration. If you set `true` , please also set `.Values.server.authMode` as `sso`.
+    enabled: true
+    # -- The root URL of the OIDC identity provider
+    issuer: ${sso_issuer}
+    clientId:
+      # -- Name of secret to retrieve the app OIDC client ID
+      name: ${argowfs_sso}
+      # -- Key of secret to retrieve the app OIDC client ID
+      key: client-id
+    clientSecret:
+      # -- Name of a secret to retrieve the app OIDC client secret
+      name: ${argowfs_sso}
+      # -- Key of a secret to retrieve the app OIDC client secret
+      key: client-secret
+    # - The OIDC redirect URL. Should be in the form <argo-root-url>/oauth2/callback.
+    redirectUrl: https://${argowfs_fqdn}/oauth2/callback
+    rbac:
+      # -- Adds ServiceAccount Policy to server (Cluster)Role.
+      enabled: false
+    # -- Scopes requested from the SSO ID provider
+    ## The 'groups' scope requests group membership information, which is usually used for authorization decisions.
+    scopes:
+      - groups
+# -- Array of extra K8s manifests to deploy
+extraObjects:
+  - apiVersion: v1
+    kind: Secret
+    metadata:
+      name: argowfs-server.service-account-token
+      annotations:
+        kubernetes.io/service-account.name: argowfs-server
+    type: kubernetes.io/service-account-token

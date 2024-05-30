@@ -1,0 +1,686 @@
+---
+# https://github.com/argoproj/argo-helm/blob/argo-cd-6.7.18/charts/argo-cd/values.yaml
+## Argo CD configuration
+## Ref: https://github.com/argoproj/argo-cd
+##
+## Globally shared configuration
+global:
+  # -- Default domain used by all components
+  ## Used for ingresses, certificates, SSO, notifications, etc.
+  domain: ${argocd_fqdn}
+  # Default logging options used by all components
+  logging:
+    # -- Set the global logging format. Either: `text` or `json`
+    format: json
+    # -- Set the global logging level. One of: `debug`, `info`, `warn` or `error`
+    level: debug
+## Argo Configs
+configs:
+  # General Argo CD configuration
+  ## Ref: https://github.com/argoproj/argo-cd/blob/master/docs/operator-manual/argocd-cm.yaml
+  cm:
+    # -- Create the argocd-cm configmap for [declarative setup]
+    create: true
+    # -- The name of tracking label used by Argo CD for resource pruning
+    application.instanceLabelKey: ${argocd_fqdn}/instance
+    # -- Enable logs RBAC enforcement
+    ## Ref: https://argo-cd.readthedocs.io/en/latest/operator-manual/upgrading/2.3-2.4/#enable-logs-rbac-enforcement
+    server.rbac.log.enforce.enable: true
+    # -- Enable local admin user
+    ## Ref: https://argo-cd.readthedocs.io/en/latest/faq/#how-to-disable-admin-user
+    admin.enabled: true
+    # -- Enable Status Badge
+    ## Ref: https://argo-cd.readthedocs.io/en/stable/user-guide/status-badge/
+    statusbadge.enabled: true
+    # add an additional local user with apiKey and login capabilities
+    #   apiKey - allows generating API keys
+    #   login - allows to login using UI
+    # Create separate user for CI/CD - Jenkins, GitHub Actions, etc.
+    accounts.cicd: apiKey, login
+    # Configure password for newly created user:
+    # Login with 'admin' user:
+    # $ argocd login argocd-dev.company.io --sso
+    # List users:
+    # $ argocd account list
+    # Set password:
+    # $ argocd account update-password --account <new_account_name> --current-password <password_for_admin_account> --new-password <new_password_for_new_account>
+    # Argo CD's externally facing base URL (optional). Required when configuring SSO
+    url: https://${argocd_fqdn}
+    dex.config: |
+      logger:
+        level: debug
+        format: json
+      connectors:
+        - type: saml
+          id: saml
+          name: Azure AD
+          config:
+            entityIssuer: https://${argocd_fqdn}/api/dex/callback
+            ssoURL: https://login.microsoftonline.com/${azure_tenant_id}/saml2
+            caData: |
+              ${azure_saml_ca_data}
+            redirectURI: https://${argocd_fqdn}/api/dex/callback
+            usernameAttr: http://schemas.xmlsoap.org/ws/2005/05/identity/claims/emailaddress
+            emailAttr: http://schemas.xmlsoap.org/ws/2005/05/identity/claims/emailaddress
+            groupsAttr: http://schemas.microsoft.com/ws/2008/06/identity/claims/groups
+      staticClients:
+        - id: argowfs-sso
+          name: 'Argo Workflows'
+          redirectURIs:
+            - https://${argowfs_fqdn}/oauth2/callback
+          secretEnv: ARGO_WORKFLOWS_SSO_CLIENT_SECRET
+    # the URL for getting chat help, this will typically be your Slack channel for support
+    help.chatUrl: 'https://company-io.slack.com/archives/K4VBWK5ZJIY'
+    # the text for getting chat help, defaults to "Chat now!"
+    help.chatText: 'Ask DevOps team about your problem!'
+    # Build options/parameters to use with `kustomize build` (optional)
+    kustomize.buildOptions: --enable-helm
+    # An optional user-defined banner message that's displayed at the top of every UI page.
+    # Every time this is updated, it will clear a user's localStorage telling the UI to hide the banner forever.
+    # ui.bannercontent: "Welcome to the company.io '${env}' environment!"
+    # Uncomment to make the banner not show the close buttons, thereby making the banner permanent.
+    # Because it is permanent, only one line of text is available to not take up too much real estate in the UI,
+    # so it is recommended that the length of the bannercontent text is kept reasonably short. Note that you can
+    # have either a permanent banner or a regular closeable banner, and NOT both. eg. A user can't dismiss a
+    # notification message (closeable) banner, to then immediately see a permanent banner.
+    # ui.bannerpermanent: true
+    # An option to specify the position of the banner, either the top or bottom of the page. The default is at the top.
+    # Uncomment to make the banner appear at the bottom of the page. Any value other than "bottom" will make the banner appear at the top.
+    # ui.bannerposition: "top"
+  # Argo CD configuration parameters
+  ## Ref: https://github.com/argoproj/argo-cd/blob/master/docs/operator-manual/argocd-cmd-params-cm.yaml
+  params:
+    # -- Create the argocd-cmd-params-cm configmap
+    # If false, it is expected the configmap will be created by something else.
+    create: true
+    ## Controller Properties
+    # -- Number of application status processors
+    controller.status.processors: 50
+    # -- Number of application operation processors
+    controller.operation.processors: 26
+    # -- Repo server RPC call timeout seconds.
+    controller.repo.server.timeout.seconds: 240
+  # Argo CD RBAC policy configuration
+  ## Ref: https://github.com/argoproj/argo-cd/blob/master/docs/operator-manual/rbac.md
+  rbac:
+    # -- The name of the default role which Argo CD will falls back to, when authorizing API requests (optional).
+    # If omitted or empty, users may be still be able to login, but will see no apps, projects, etc...
+    policy.default: role:developers
+    # -- File containing user-defined policies and role definitions.
+    # @default -- `''` (See [values.yaml])
+    # Policy rules are in the form:
+    #  p, subject, resource, action, object, effect
+    # Role definitions and bindings are in the form:
+    #  g, subject, inherited-subject
+    policy.csv: |
+      # p, role:org-admin, applications, *, */*, allow
+      # p, role:org-admin, clusters, *, */*, allow
+      # p, role:org-admin, repositories, get, *, allow
+      # p, role:org-admin, repositories, create, *, allow
+      # p, role:org-admin, repositories, update, *, allow
+      # p, role:org-admin, repositories, delete, *, allow
+      ######### Developers role
+      p, role:developers, applications, get, */*, allow
+      p, role:developers, certificates, get, *, allow
+      p, role:developers, clusters, get, *, allow
+      p, role:developers, repositories, get, *, allow
+      p, role:developers, projects, get, *, allow
+      p, role:developers, accounts, get, *, allow
+      p, role:developers, gpgkeys, get, *, allow
+      p, role:developers, logs, get, */*, allow
+      p, role:developers, applications, sync, */*, allow
+      g, "2cda7cf6-41f2-4554-8a01-18814dddb2a9", role:developers
+      ######### CI/CD user (GitHub Actions and Jenkins)
+      p, role:cicd, applications, sync, */*, allow
+      g, cicd, role:cicd
+      ######### Port user
+      g, port, role:readonly
+      ######### DevOps team
+      g, "a0f33975-270c-4d68-b7ef-930479348d82", role:admin
+  # SSH known hosts for Git repositories
+  ## Ref: https://argo-cd.readthedocs.io/en/stable/operator-manual/declarative-setup/#ssh-known-host-public-keys
+  ssh:
+    # -- Annotations to be added to argocd-ssh-known-hosts-cm configmap
+    annotations: {}
+    # -- Known hosts to be added to the known host list by default.
+    # @default -- See [values.yaml]
+    knownHosts: |
+      [ssh.github.com]:443 ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAABBBEmKSENjQEezOmxkZMy7opKgwFB9nkt5YRrYMjNuG5N87uRgg6CLrbo5wAdT/y6v0mKV0U2w0WZ2YB/++Tpockg=
+      [ssh.github.com]:443 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl
+      [ssh.github.com]:443 ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQCj7ndNxQowgcQnjshcLrqPEiiphnt+VTTvDP6mHBL9j1aNUkY4Ue1gvwnGLVlOhGeYrnZaMgRK6+PKCUXaDbC7qtbW8gIkhL7aGCsOr/C56SJMy/BCZfxd1nWzAOxSDPgVsmerOBYfNqltV9/hWCqBywINIR+5dIg6JTJ72pcEpEjcYgXkE2YEFXV1JHnsKgbLWNlhScqb2UmyRkQyytRLtL+38TGxkxCflmO+5Z8CSSNY7GidjMIZ7Q4zMjA2n1nGrlTDkzwDCsw+wqFPGQA179cnfGWOWRVruj16z6XyvxvjJwbz0wQZ75XK5tKSb7FNyeIEs4TT4jk+S4dhPeAUC5y+bDYirYgM4GC7uEnztnZyaVWQ7B381AK4Qdrwt51ZqExKbQpTUNn+EjqoTwvqNj4kqx5QUCI0ThS/YkOxJCXmPUWZbhjpCg56i+2aB6CmK2JGhn57K5mj0MNdBXA4/WnwH6XoPWJzK5Nyu2zB3nAZp+S5hpQs+p1vN1/wsjk=
+      bitbucket.org ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAABBBPIQmuzMBuKdWeF4+a2sjSSpBK0iqitSQ+5BM9KhpexuGt20JpTVM7u5BDZngncgrqDMbWdxMWWOGtZ9UgbqgZE=
+      bitbucket.org ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIIazEu89wgQZ4bqs3d63QSMzYVa0MuJ2e2gKTKqu+UUO
+      bitbucket.org ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQDQeJzhupRu0u0cdegZIa8e86EG2qOCsIsD1Xw0xSeiPDlCr7kq97NLmMbpKTX6Esc30NuoqEEHCuc7yWtwp8dI76EEEB1VqY9QJq6vk+aySyboD5QF61I/1WeTwu+deCbgKMGbUijeXhtfbxSxm6JwGrXrhBdofTsbKRUsrN1WoNgUa8uqN1Vx6WAJw1JHPhglEGGHea6QICwJOAr/6mrui/oB7pkaWKHj3z7d1IC4KWLtY47elvjbaTlkN04Kc/5LFEirorGYVbt15kAUlqGM65pk6ZBxtaO3+30LVlORZkxOh+LKL/BvbZ/iRNhItLqNyieoQj/uh/7Iv4uyH/cV/0b4WDSd3DptigWq84lJubb9t/DnZlrJazxyDCulTmKdOR7vs9gMTo+uoIrPSb8ScTtvw65+odKAlBj59dhnVp9zd7QUojOpXlL62Aw56U4oO+FALuevvMjiWeavKhJqlR7i5n9srYcrNV7ttmDw7kf/97P5zauIhxcjX+xHv4M=
+      github.com ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAABBBEmKSENjQEezOmxkZMy7opKgwFB9nkt5YRrYMjNuG5N87uRgg6CLrbo5wAdT/y6v0mKV0U2w0WZ2YB/++Tpockg=
+      github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl
+      github.com ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQCj7ndNxQowgcQnjshcLrqPEiiphnt+VTTvDP6mHBL9j1aNUkY4Ue1gvwnGLVlOhGeYrnZaMgRK6+PKCUXaDbC7qtbW8gIkhL7aGCsOr/C56SJMy/BCZfxd1nWzAOxSDPgVsmerOBYfNqltV9/hWCqBywINIR+5dIg6JTJ72pcEpEjcYgXkE2YEFXV1JHnsKgbLWNlhScqb2UmyRkQyytRLtL+38TGxkxCflmO+5Z8CSSNY7GidjMIZ7Q4zMjA2n1nGrlTDkzwDCsw+wqFPGQA179cnfGWOWRVruj16z6XyvxvjJwbz0wQZ75XK5tKSb7FNyeIEs4TT4jk+S4dhPeAUC5y+bDYirYgM4GC7uEnztnZyaVWQ7B381AK4Qdrwt51ZqExKbQpTUNn+EjqoTwvqNj4kqx5QUCI0ThS/YkOxJCXmPUWZbhjpCg56i+2aB6CmK2JGhn57K5mj0MNdBXA4/WnwH6XoPWJzK5Nyu2zB3nAZp+S5hpQs+p1vN1/wsjk=
+      gitlab.com ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAABBBFSMqzJeV9rUzU4kWitGjeR4PWSa29SPqJ1fVkhtj3Hw9xjLVXVYrU9QlYWrOLXBpQ6KWjbjTDTdDkoohFzgbEY=
+      gitlab.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAfuCHKVTjquxvt6CM6tdG4SLp1Btn/nOeHHE5UOzRdf
+      gitlab.com ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQCsj2bNKTBSpIYDEGk9KxsGh3mySTRgMtXL583qmBpzeQ+jqCMRgBqB98u3z++J1sKlXHWfM9dyhSevkMwSbhoR8XIq/U0tCNyokEi/ueaBMCvbcTHhO7FcwzY92WK4Yt0aGROY5qX2UKSeOvuP4D6TPqKF1onrSzH9bx9XUf2lEdWT/ia1NEKjunUqu1xOB/StKDHMoX4/OKyIzuS0q/T1zOATthvasJFoPrAjkohTyaDUz2LN5JoH839hViyEG82yB+MjcFV5MU3N1l1QL3cVUCh93xSaua1N85qivl+siMkPGbO5xR/En4iEY6K2XPASUEMaieWVNTRCtJ4S8H+9
+      ssh.dev.azure.com ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQC7Hr1oTWqNqOlzGJOfGJ4NakVyIzf1rXYd4d7wo6jBlkLvCA4odBlL0mDUyZ0/QUfTTqeu+tm22gOsv+VrVTMk6vwRU75gY/y9ut5Mb3bR5BV58dKXyq9A9UeB5Cakehn5Zgm6x1mKoVyf+FFn26iYqXJRgzIZZcZ5V6hrE0Qg39kZm4az48o0AUbf6Sp4SLdvnuMa2sVNwHBboS7EJkm57XQPVU3/QpyNLHbWDdzwtrlS+ez30S3AdYhLKEOxAG8weOnyrtLJAUen9mTkol8oII1edf7mWWbWVf0nBmly21+nZcmCTISQBtdcyPaEno7fFQMDD26/s0lfKob4Kw8H
+      vs-ssh.visualstudio.com ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQC7Hr1oTWqNqOlzGJOfGJ4NakVyIzf1rXYd4d7wo6jBlkLvCA4odBlL0mDUyZ0/QUfTTqeu+tm22gOsv+VrVTMk6vwRU75gY/y9ut5Mb3bR5BV58dKXyq9A9UeB5Cakehn5Zgm6x1mKoVyf+FFn26iYqXJRgzIZZcZ5V6hrE0Qg39kZm4az48o0AUbf6Sp4SLdvnuMa2sVNwHBboS7EJkm57XQPVU3/QpyNLHbWDdzwtrlS+ez30S3AdYhLKEOxAG8weOnyrtLJAUen9mTkol8oII1edf7mWWbWVf0nBmly21+nZcmCTISQBtdcyPaEno7fFQMDD26/s0lfKob4Kw8H
+    # -- Additional known hosts for private repositories
+    extraHosts: ''
+  # Argo CD sensitive data
+  # Ref: https://argo-cd.readthedocs.io/en/stable/operator-manual/user-management/#sensitive-data-and-sso-client-secrets
+  secret:
+    # -- Create the argocd-secret
+    createSecret: true
+    # -- Bcrypt hashed admin password
+    ## Argo expects the password in the secret to be bcrypt hashed. You can create this hash with
+    ## `htpasswd -nbBC 10 "" $ARGO_PWD | tr -d ':\n' | sed 's/$2y/$2a/'`
+    argocdServerAdminPassword: '$2a$10kjhvbwdhjcvbhjbswdhjbcv'
+  # -- Define custom [CSS styles] for your argo instance.
+  # This setting will automatically mount the provided CSS and reference it in the argo configuration.
+  # @default -- `""` (See [values.yaml])
+  ## Ref: https://argo-cd.readthedocs.io/en/stable/operator-manual/custom-styles/
+  styles: |
+    .ui-banner {
+      background: #00A3A3;
+      color: #323089;
+    }
+    .sidebar__logo img {
+      content: url(https://www.company.io/wp-content/media/2023/04/cropped-company-io-logo-circle.png);
+    }
+    .sidebar__logo-container img {
+      content: url(assets/images/argologo.svg);
+    }
+    .login__logo img.logo-image {
+      display: none
+    }
+    .login__logo {
+        background-size: 100px 100px;
+        background-image: url(https://www.company.io/wp-content/media/2023/04/cropped-company-io-logo-circle.png);
+        height: 100px;
+    }
+## Application controller
+controller:
+  # -- The number of application controller pods to run.
+  # Additional replicas will cause sharding of managed clusters across number of replicas.
+  ## With dynamic cluster distribution turned on, sharding of the clusters will gracefully
+  ## rebalance if the number of replica's changes or one becomes unhealthy. (alpha)
+  replicas: ${controller_replicas}
+  # -- Environment variables to pass to application controller
+  env:
+    - name: 'ARGOCD_CONTROLLER_REPLICAS'
+      value: '${controller_replicas}'
+    - name: 'ARGOCD_CONTROLLER_SHARDING_ALGORITHM'
+      value: 'round-robin'
+  # -- Resource limits and requests for the application controller pods
+  resources:
+    # limits:
+    #   cpu: ${controller_resources_limits_cpu}
+    #   memory: ${controller_resources_limits_mem}
+    requests:
+      cpu: ${controller_resources_requests_cpu}
+      memory: ${controller_resources_requests_mem}
+  ## Application controller metrics configuration
+  metrics:
+    # -- Deploy metrics service
+    enabled: true
+    serviceMonitor:
+      # -- Enable a prometheus ServiceMonitor
+      enabled: true
+      # -- Prometheus ServiceMonitor interval
+      interval: 60s
+      # -- Prometheus ServiceMonitor selector
+      selector:
+        release: company
+## Dex
+dex:
+  metrics:
+    # -- Deploy metrics service
+    enabled: true
+    serviceMonitor:
+      # -- Enable a prometheus ServiceMonitor
+      enabled: true
+      # -- Prometheus ServiceMonitor selector
+      selector:
+        release: company
+      # # -- Prometheus ServiceMonitor scheme
+      # scheme: "https"
+      # # -- Prometheus ServiceMonitor tlsConfig
+      # tlsConfig:
+      #   insecureSkipVerify: true
+      # -- Prometheus ServiceMonitor namespace
+      # namespace: "monitoring"
+  # -- Environment variables to pass to the Dex server
+  env:
+    - name: ARGO_WORKFLOWS_SSO_CLIENT_SECRET
+      valueFrom:
+        secretKeyRef:
+          name: ${argowfs_sso_secret}
+          key: client-secret
+  # -- Resource limits and requests for dex
+  resources:
+    # limits:
+    #   cpu: 50m
+    #   memory: 64Mi
+    requests:
+      cpu: 100m
+      memory: 128Mi
+  # -- Dex log level. One of: `debug`, `info`, `warn`, `error`
+  # @default -- `""` (defaults to global.logging.level)
+  logLevel: ''
+## Redis
+redis:
+  # -- Enable redis
+  enabled: false
+## Redis-HA subchart replaces custom redis deployment when `redis-ha.enabled=true`
+# Ref: https://github.com/DandyDeveloper/charts/blob/master/charts/redis-ha/values.yaml
+redis-ha:
+  # -- Enables the Redis HA subchart and disables the custom Redis single node deployment
+  enabled: true
+  ## Prometheus redis-exporter sidecar
+  exporter:
+    # -- Enable Prometheus redis-exporter sidecar
+    enabled: true
+    serviceMonitor:
+      # When set true then use a ServiceMonitor to configure scraping
+      enabled: true
+      # Set labels for the ServiceMonitor, use this to define your scrape label for Prometheus Operator
+      labels:
+        release: company
+  persistentVolume:
+    # -- Configures persistence on Redis nodes
+    enabled: true
+  ## Redis specific configuration options
+  redis:
+  ## Enables a HA Proxy for better LoadBalancing / Sentinel Master support. Automatically proxies to Redis master.
+  haproxy:
+    metrics:
+      # -- HAProxy enable prometheus metric scraping
+      enabled: true
+      serviceMonitor:
+        # When set true then use a ServiceMonitor to configure scraping
+        enabled: true
+        # Set labels for the ServiceMonitor, use this to define your scrape label for Prometheus Operator
+        labels:
+          release: company
+## Server
+server:
+  ## Argo CD server Horizontal Pod Autoscaler
+  autoscaling:
+    # -- Enable Horizontal Pod Autoscaler ([HPA]) for the Argo CD server
+    enabled: true
+    # -- Minimum number of replicas for the Argo CD server [HPA]
+    minReplicas: ${server_min_replicas}
+    # -- Maximum number of replicas for the Argo CD server [HPA]
+    maxReplicas: ${server_max_replicas}
+  # -- Environment variables to pass to Argo CD server
+  env:
+    - name: ARGOCD_API_SERVER_REPLICAS
+      value: '${server_min_replicas}'
+  # -- Resource limits and requests for the argocd-extensions container
+  resources:
+    # limits:
+    #   cpu: ${server_resources_limits_cpu}
+    #   memory: ${server_resources_limits_mem}
+    requests:
+      cpu: ${server_resources_requests_cpu}
+      memory: ${server_resources_requests_mem}
+  ## Server metrics service configuration
+  metrics:
+    # -- Deploy metrics service
+    enabled: true
+    serviceMonitor:
+      # -- Enable a prometheus ServiceMonitor
+      enabled: true
+      # -- Prometheus ServiceMonitor selector
+      selector:
+        release: company
+  # Argo CD server ingress configuration
+  ingress:
+    # -- Enable an ingress resource for the Argo CD server
+    enabled: true
+    # -- Additional ingress annotations
+    ## Ref: https://argo-cd.readthedocs.io/en/stable/operator-manual/ingress/#option-1-ssl-passthrough
+    annotations:
+      alb.ingress.kubernetes.io/actions.ssl-redirect: '{"Type": "redirect", "RedirectConfig": { "Protocol": "HTTPS", "Port": "443", "StatusCode": "HTTP_301"}}'
+      alb.ingress.kubernetes.io/backend-protocol: HTTPS
+      alb.ingress.kubernetes.io/certificate-arn: ${alb_certificate_arn}
+      alb.ingress.kubernetes.io/group.name: ${alb_group_name}
+      alb.ingress.kubernetes.io/healthcheck-path: /
+      alb.ingress.kubernetes.io/listen-ports: '[{"HTTP":80,"HTTPS": 443}]'
+      alb.ingress.kubernetes.io/load-balancer-name: ${alb_name}
+      alb.ingress.kubernetes.io/scheme: internet-facing
+      alb.ingress.kubernetes.io/tags: ${alb_tags}
+      alb.ingress.kubernetes.io/target-type: 'ip'
+    # -- Defines which ingress controller will implement the resource
+    ingressClassName: alb
+## Repo Server
+repoServer:
+  autoscaling:
+    enabled: true
+    minReplicas: ${repo_server_min_replicas}
+    maxReplicas: ${repo_server_max_replicas}
+  env:
+    - name: 'ARGOCD_GIT_ATTEMPTS_COUNT'
+      value: '7'
+    - name: 'ARGOCD_EXEC_TIMEOUT'
+      value: '240s'
+  # -- Resource limits and requests for the repo server pods
+  resources:
+    # limits:
+    #   cpu: ${repo_server_resources_limits_cpu}
+    #   memory: ${repo_server_resources_limits_mem}
+    requests:
+      cpu: ${repo_server_resources_requests_cpu}
+      memory: ${repo_server_resources_requests_mem}
+  ## Repo server metrics service configuration
+  metrics:
+    # -- Deploy metrics service
+    enabled: true
+    serviceMonitor:
+      # -- Enable a prometheus ServiceMonitor
+      enabled: true
+      # -- Prometheus ServiceMonitor selector
+      selector:
+        release: company
+## ApplicationSet controller
+applicationSet:
+  # -- Enable ApplicationSet controller
+  enabled: true
+  ## Metrics service configuration
+  metrics:
+    # -- Deploy metrics service
+    enabled: true
+    serviceMonitor:
+      # -- Enable a prometheus ServiceMonitor
+      enabled: true
+      selector:
+        release: company
+## Notifications controller
+notifications:
+  # -- Enable notifications controller
+  enabled: true
+  # -- Define user-defined context
+  ## For more information: https://argo-cd.readthedocs.io/en/stable/operator-manual/notifications/templates/#defining-user-defined-context
+  context:
+    argocdUrl: https://${argocd_fqdn}
+    environmentName: ${env}
+  metrics:
+    # -- Enables prometheus metrics server
+    enabled: true
+    serviceMonitor:
+      # -- Enable a prometheus ServiceMonitor
+      enabled: true
+      # -- Prometheus ServiceMonitor selector
+      selector:
+        release: company
+  # -- Configures notification services such as slack, email or custom webhook
+  # @default -- See [values.yaml]
+  ## For more information: https://argo-cd.readthedocs.io/en/stable/operator-manual/notifications/services/overview/
+  notifiers:
+    service.slack: |
+      token: $slack-token
+  # -- The notification template is used to generate the notification content
+  ## For more information: https://argo-cd.readthedocs.io/en/stable/operator-manual/notifications/templates/
+  templates:
+    template.app-created: |
+      email:
+        subject: Application {{.app.metadata.name}} has been created.
+      message: Application {{.app.metadata.name}} has been created.
+    template.app-deleted: |
+      email:
+        subject: Application {{.app.metadata.name}} has been deleted.
+      message: Application {{.app.metadata.name}} has been deleted.
+    template.app-deployed: |
+      email:
+        subject: New version of an application {{.app.metadata.name}} is up and running.
+      message: |
+        {{if eq .serviceType "slack"}}:white_check_mark:{{end}} Application {{.app.metadata.name}} is now running new version of deployments manifests.
+      slack:
+        attachments: |
+          [{
+            "title": "{{ .app.metadata.name}}",
+            "title_link":"{{.context.argocdUrl}}/applications/{{.app.metadata.name}}",
+            "color": "#18be52",
+            "fields": [
+            {
+              "title": "Sync Status",
+              "value": "{{.app.status.sync.status}}",
+              "short": true
+            },
+            {
+              "title": "Repository",
+              "value": "{{.app.spec.source.repoURL}}",
+              "short": true
+            },
+            {
+              "title": "Revision",
+              "value": "{{.app.status.sync.revision}}",
+              "short": true
+            }
+            {{range $index, $c := .app.status.conditions}}
+            {{if not $index}},{{end}}
+            {{if $index}},{{end}}
+            {
+              "title": "{{$c.type}}",
+              "value": "{{$c.message}}",
+              "short": true
+            }
+            {{end}}
+            ]
+          }]
+    template.app-health-degraded: |
+      email:
+        subject: Application {{.app.metadata.name}} has degraded.
+      message: |
+        {{if eq .serviceType "slack"}}:exclamation:{{end}} Application {{.app.metadata.name}} has degraded.
+        Application details: {{.context.argocdUrl}}/applications/{{.app.metadata.name}}.
+      slack:
+        attachments: |-
+          [{
+            "title": "{{ .app.metadata.name}}",
+            "title_link": "{{.context.argocdUrl}}/applications/{{.app.metadata.name}}",
+            "color": "#f4c030",
+            "fields": [
+            {
+              "title": "Sync Status",
+              "value": "{{.app.status.sync.status}}",
+              "short": true
+            },
+            {
+              "title": "Repository",
+              "value": "{{.app.spec.source.repoURL}}",
+              "short": true
+            }
+            {{range $index, $c := .app.status.conditions}}
+            {{if not $index}},{{end}}
+            {{if $index}},{{end}}
+            {
+              "title": "{{$c.type}}",
+              "value": "{{$c.message}}",
+              "short": true
+            }
+            {{end}}
+            ]
+          }]
+    template.app-sync-failed: |
+      email:
+        subject: Failed to sync application {{.app.metadata.name}}.
+      message: |
+        {{if eq .serviceType "slack"}}:exclamation:{{end}}  The sync operation of application {{.app.metadata.name}} has failed at {{.app.status.operationState.finishedAt}} with the following error: {{.app.status.operationState.message}}
+        Sync operation details are available at: {{.context.argocdUrl}}/applications/{{.app.metadata.name}}?operation=true .
+      slack:
+        attachments: |-
+          [{
+            "title": "{{ .app.metadata.name}}",
+            "title_link":"{{.context.argocdUrl}}/applications/{{.app.metadata.name}}",
+            "color": "#E96D76",
+            "fields": [
+            {
+              "title": "Sync Status",
+              "value": "{{.app.status.sync.status}}",
+              "short": true
+            },
+            {
+              "title": "Repository",
+              "value": "{{.app.spec.source.repoURL}}",
+              "short": true
+            }
+            {{range $index, $c := .app.status.conditions}}
+            {{if not $index}},{{end}}
+            {{if $index}},{{end}}
+            {
+              "title": "{{$c.type}}",
+              "value": "{{$c.message}}",
+              "short": true
+            }
+            {{end}}
+            ]
+          }]
+    template.app-sync-running: |
+      email:
+        subject: Start syncing application {{.app.metadata.name}}.
+      message: |
+        The sync operation of application {{.app.metadata.name}} has started at {{.app.status.operationState.startedAt}}.
+        Sync operation details are available at: {{.context.argocdUrl}}/applications/{{.app.metadata.name}}?operation=true .
+      slack:
+        attachments: |-
+          [{
+            "title": "{{ .app.metadata.name}}",
+            "title_link":"{{.context.argocdUrl}}/applications/{{.app.metadata.name}}",
+            "color": "#0DADEA",
+            "fields": [
+            {
+              "title": "Sync Status",
+              "value": "{{.app.status.sync.status}}",
+              "short": true
+            },
+            {
+              "title": "Repository",
+              "value": "{{.app.spec.source.repoURL}}",
+              "short": true
+            }
+            {{range $index, $c := .app.status.conditions}}
+            {{if not $index}},{{end}}
+            {{if $index}},{{end}}
+            {
+              "title": "{{$c.type}}",
+              "value": "{{$c.message}}",
+              "short": true
+            }
+            {{end}}
+            ]
+          }]
+    template.app-sync-status-unknown: |
+      email:
+        subject: Application {{.app.metadata.name}} sync status is 'Unknown'
+      message: |
+        {{if eq .serviceType "slack"}}:exclamation:{{end}} Application {{.app.metadata.name}} sync is 'Unknown'.
+        Application details: {{.context.argocdUrl}}/applications/{{.app.metadata.name}}.
+        {{if ne .serviceType "slack"}}
+        {{range $c := .app.status.conditions}}
+            * {{$c.message}}
+        {{end}}
+        {{end}}
+      slack:
+        attachments: |-
+          [{
+            "title": "{{ .app.metadata.name}}",
+            "title_link":"{{.context.argocdUrl}}/applications/{{.app.metadata.name}}",
+            "color": "#E96D76",
+            "fields": [
+            {
+              "title": "Sync Status",
+              "value": "{{.app.status.sync.status}}",
+              "short": true
+            },
+            {
+              "title": "Repository",
+              "value": "{{.app.spec.source.repoURL}}",
+              "short": true
+            }
+            {{range $index, $c := .app.status.conditions}}
+            {{if not $index}},{{end}}
+            {{if $index}},{{end}}
+            {
+              "title": "{{$c.type}}",
+              "value": "{{$c.message}}",
+              "short": true
+            }
+            {{end}}
+            ]
+          }]
+    template.app-sync-succeeded: |
+      email:
+        subject: Application {{.app.metadata.name}} has been successfully synced.
+      message: |
+        {{if eq .serviceType "slack"}}:white_check_mark:{{end}} Application {{.app.metadata.name}} has been successfully synced at {{.app.status.operationState.finishedAt}}.
+        Sync operation details are available at: {{.context.argocdUrl}}/applications/{{.app.metadata.name}}?operation=true .
+      slack:
+        attachments: |-
+          [{
+            "title": "{{ .app.metadata.name}}",
+            "title_link":"{{.context.argocdUrl}}/applications/{{.app.metadata.name}}",
+            "color": "#18be52",
+            "fields": [
+            {
+              "title": "Sync Status",
+              "value": "{{.app.status.sync.status}}",
+              "short": true
+            },
+            {
+              "title": "Repository",
+              "value": "{{.app.spec.source.repoURL}}",
+              "short": true
+            }
+            {{range $index, $c := .app.status.conditions}}
+            {{if not $index}},{{end}}
+            {{if $index}},{{end}}
+            {
+              "title": "{{$c.type}}",
+              "value": "{{$c.message}}",
+              "short": true
+            }
+            {{end}}
+            ]
+          }]
+  # -- The trigger defines the condition when the notification should be sent
+  ## For more information: https://argo-cd.readthedocs.io/en/stable/operator-manual/notifications/triggers/
+  triggers:
+    trigger.on-created: |
+      - description: Application is created.
+        oncePer: app.metadata.name
+        send:
+        - app-created
+        when: "true"
+    trigger.on-deleted: |
+      - description: Application is deleted.
+        oncePer: app.metadata.name
+        send:
+        - app-deleted
+        when: app.metadata.deletionTimestamp != nil
+    trigger.on-deployed: |
+      - description: Application is synced and healthy. Triggered once per commit.
+        oncePer: app.status.sync.revision
+        send:
+        - app-deployed
+        when: app.status.operationState.phase in ['Succeeded'] and app.status.health.status == 'Healthy'
+    trigger.on-health-degraded: |
+      - description: Application has degraded
+        send:
+        - app-health-degraded
+        when: app.status.health.status == 'Degraded'
+    trigger.on-sync-failed: |
+      - description: Application syncing has failed
+        send:
+        - app-sync-failed
+        when: app.status.operationState.phase in ['Error', 'Failed']
+    trigger.on-sync-running: |
+      - description: Application is being synced
+        send:
+        - app-sync-running
+        when: app.status.operationState.phase in ['Running']
+    trigger.on-sync-status-unknown: |
+      - description: Application status is 'Unknown'
+        send:
+        - app-sync-status-unknown
+        when: app.status.sync.status == 'Unknown'
+    trigger.on-sync-succeeded: |
+      - description: Application syncing has succeeded
+        send:
+        - app-sync-succeeded
+        when: app.status.operationState.phase in ['Succeeded']
